@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	<flow name="placeOrder" doc:id="3bbf2d6d-03c2-4624-b9cb-b4560a40e9e4" >
+		<logger level="INFO" doc:name="Logger" doc:id="a60aaa58-efc5-4dec-93be-c4fbadf865a3" message="Started"/>
+		<set-variable value="#[attributes.queryParams.Quantity]" doc:name="Quantity" doc:id="40b21c0c-a86a-457d-a283-5efb0924cf29" variableName="Quantity" />
+		<set-variable value="#[attributes.queryParams.'24hrs']" doc:name="24hrs" doc:id="04ef4227-4279-45c2-9acb-6a730061824d" variableName="24hrs"/>
+		<http:request method="GET" doc:name="Request" doc:id="bd434efb-458d-459a-8378-a3ea81454425" config-ref="HTTP_Request_configuration" path="/products/v3/get-details">
+			<http:headers ><![CDATA[#[output application/json
+---
+{
+	"X-Rapidapi-Key" : p('req.key'),
+	"X-Rapidapi-Host" : p('req.host')
+}]]]></http:headers>
+			<http:query-params ><![CDATA[#[output application/java
+---
+{
+	"usItemId" : attributes.queryParams.usItemId
+}]]]></http:query-params>
+		</http:request>
+		<ee:transform doc:name="Transform Message" doc:id="140807a9-267c-4051-90ef-fb387d772b91" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	productTypeId : payload.data.product.productTypeId,
+	orderLimit : payload.data.product.orderLimit,
+	orderMinLimit :  payload.data.product.orderMinLimit,
+	postalCode : payload.data.product.location.postalCode
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<choice doc:name="Choice" doc:id="25f4051b-3e35-423f-9da2-e96f9bb21847">
+			<when expression="#[vars.Quantity as Number &gt; payload.orderLimit as Number]">
+				<set-payload value="#[&quot;You can't place an order qauntity  more than &quot; ++ payload.orderLimit]" doc:name="Set Payload" doc:id="88390281-ce64-4e07-8af1-abe4d37c0fd9" />
+			</when>
+			<when expression="#[vars.Quantity as Number &lt; payload.orderMinLimit as Number]">
+				<set-payload value='#["Order quanity should be more than or equal to " ++ payload.orderMinLimit]' doc:name="Set Payload" doc:id="16111dd3-aaa5-42d8-bf73-ccfed1843296" />
+			</when>
+			<otherwise >
+				<set-variable value="#[payload.productTypeId]" doc:name="productTypeId" doc:id="37ddb2d2-050a-4c0e-b60c-2ad6bd8d0541" variableName="productTypeId" />
+				<http:request method="GET" doc:name="Request" doc:id="81b27b45-93f2-4b87-b525-211dda96008f" config-ref="HTTP_Request_configuration" path="/stores/list">
+			<http:headers><![CDATA[#[output application/json
+---
+{
+	"X-Rapidapi-Key" : p('req.key'),
+	"X-Rapidapi-Host" : p('req.host')
+}]]]></http:headers>
+			<http:query-params><![CDATA[#[output application/java
+---
+{
+	"postalCode" : payload.postalCode
+}]]]></http:query-params>
+		</http:request>
+				<ee:transform doc:name="Transform Message" doc:id="29e76c68-2216-4c94-9ecc-7f0f98b37da5">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload.data.storesBySearchTerm.stores map(value,index)-> 
+{
+	 
+	"store_id" 	      : value.id,
+	"store_name"      : value.displayName,
+	"store_address"   : value.address.address ++ value.address.city ++ value.address.state ++ value.address.country,
+	"store_distance"  :value.distance,
+	"store_contact_number" : '',
+	"product_type_id" : vars.productTypeId,
+	"quantity"        : vars.Quantity,
+	"Fullhrs"           : value.operationalHours.open24Hours
+} 
+
+]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+				<choice doc:name="24hrsOnly" doc:id="7afba91d-cf26-45e8-94db-f9bbc5ff133a" >
+					<when expression="#[vars.&quot;24hrs&quot; == 'yes']">
+						<ee:transform doc:name="Transform Message" doc:id="4b999c36-c5a8-4bf7-a70a-4d18c492c5e8">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload filter (value,index) -> (value.Fullhrs != null)]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+						<choice doc:name="Choice" doc:id="2e5abdf2-b592-49f3-b58a-11ce1478d6f2" >
+							<when expression="#[isEmpty(payload)]">
+								<set-payload value="Sorry..No stores which are functional for 24 hours for the selection." doc:name="Set Payload" doc:id="393ca40c-93c3-46a8-ad6e-accbbc89e10c" />
+							</when>
+							<otherwise >
+								<http:request method="POST" doc:name="Request" doc:id="51de77d0-29fa-4d84-af34-d8e128fa22d5" config-ref="HTTP_Request_configuration-DB" path="/insert" />
+								<set-payload value='#[output application/json&#10;---&#10;{&#10;	"message" : "Order Placed Succesfully"&#10;}]' doc:name="Set Payload" doc:id="43602c6b-cb07-455d-8023-268a749557b9" />
+							</otherwise>
+						</choice>
+					</when>
+					<otherwise >
+						<http:request method="POST" doc:name="Request" doc:id="fc6c47f6-c173-4bb7-82f8-9efb051f96e9" config-ref="HTTP_Request_configuration-DB" path="/insert">
+							<http:body ><![CDATA[#[payload[0]]]]></http:body>
+						</http:request>
+						<set-payload value='#[output application/json&#10;---&#10;{&#10;	"message" : "Order Placed Succesfully"&#10;}]' doc:name="Set Payload" doc:id="195e9a5c-379d-43c7-b859-93e43db527a1" />
+					</otherwise>
+				</choice>
+			</otherwise>
+		</choice>
+		<error-handler >
+			<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="21d59b93-e8bb-45f8-8aac-eea63fb66ea7" type="ANY">
+				<set-payload value="Something went wrong" doc:name="Set Payload" doc:id="9add5a10-042d-4ff5-ad85-3eb78009ac57" />
+			</on-error-propagate>
+		</error-handler>
+	</flow>
+</mule>
